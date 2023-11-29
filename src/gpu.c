@@ -17,6 +17,8 @@
 #define BGCOLOR_G 24
 #define BGCOLOR_B  0
 
+RenderContext ctx;
+
 void init_context(RenderContext *ctx) {
 	Framebuffer *db;
 

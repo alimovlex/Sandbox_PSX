@@ -19,7 +19,7 @@ typedef struct {
 	volatile int8_t db_active, buffering;
 } StreamContext;
 
-static StreamContext stream_ctx;
+extern StreamContext stream_ctx;
 
 void stop_stream(void);
 void start_stream(void);

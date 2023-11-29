@@ -27,6 +27,8 @@
 #define DUMMY_BLOCK_ADDR  0x1000
 #define BUFFER_START_ADDR 0x1010
 
+StreamContext stream_ctx;
+
 void spu_irq_handler(void) {
 	// Acknowledge the interrupt to ensure it can be triggered again. The only
 	// way to do this is actually to disable the interrupt entirely; we'll

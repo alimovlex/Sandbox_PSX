@@ -55,8 +55,6 @@
 
 extern const uint8_t stream_data[];
 
-static RenderContext ctx;
-
 int main(int argc, const char* argv[]) {
 	init_context(&ctx);
 	SpuInit();

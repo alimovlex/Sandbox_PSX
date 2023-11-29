@@ -8,5 +8,7 @@ typedef struct {
 	int         db_active;
 } RenderContext;
 
+extern RenderContext ctx;
+
 void init_context(RenderContext *ctx);
 void display(RenderContext *ctx);
