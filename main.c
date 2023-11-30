@@ -1,62 +1,40 @@
-/*
- * PSn00bSDK SPU .VAG streaming example
- * (C) 2022 spicyjpeg - MPL licensed
- *
- * This example shows how to play arbitrarily long sounds, which normally would
- * not fit into SPU RAM in their entirety, by streaming them to the SPU from
- * main RAM. In this example audio data is streamed from an in-memory file,
- * however the code can easily be modified to stream from the CD instead (see
- * the cdstream example).
- *
- * The way SPU streaming works is by splitting the audio data into a series of
- * small "chunks", each of which in turn is an array of concatenated buffers
- * holding SPU ADPCM data (one for each channel, so a stereo stream would have
- * 2 buffers per chunk). All buffers in a chunk are played simultaneously using
- * multiple SPU channels; each buffer has the loop flag set at the end, so the
- * SPU will jump to the loop point set in the SPU_CH_LOOP_ADDR registers after
- * the chunk is played.
- *
- * As the loop point doesn't necessarily have to be within the chunk itself, it
- * can be used to "queue" another chunk to be played immediately after the
- * current one. This allows for double buffering: two chunks are always kept in
- * SPU RAM and one is overwritten with a new chunk while the other is playing.
- * Chunks are laid out in SPU RAM as follows:
- *
- *           ________________________________________________
- *          /               __________________               \
- *          |              /                  \              |
- *          v Loop point   | Loop flag        v Loop point   | Loop flag
- * +-------+----------------+----------------+----------------+----------------+
- * | Dummy | Left buffer 0  | Right buffer 0 | Left buffer 1  | Right buffer 1 |
- * +-------+----------------+----------------+----------------+----------------+
- *          \____________Chunk 0____________/ \____________Chunk 1____________/
- *
- * In order to keep streaming continuously we need to know when each chunk
- * actually starts playing. The SPU can be configured to trigger an interrupt
- * whenever a specific address in SPU RAM is read by a channel, so we can just
- * point it to the beginning of the buffered chunk's first buffer and wait
- * until the IRQ is fired before loading the next chunk.
- *
- * Chunks are read from a special type of .VAG file which has been interleaved
- * ahead-of-time and already contains the loop flags required to make streaming
- * work. A Python script is provided to generate such file from one or more
- * mono .VAG files.
- */
+
+#include <sys/types.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <psxetc.h>
-#include <psxapi.h>
 #include <psxgpu.h>
+#include <psxgte.h>
+#include <psxetc.h>
 #include <psxpad.h>
+#include <psxapi.h>
 #include <psxspu.h>
+#include <psxetc.h>
+#include <inline_c.h>
 #include <hwregs_c.h>
+
+#include "clip.h"
+#include "lookat.h"
+#include "cube.h"
 #include "spu.h"
-#include "gpu.h"
 
-extern const uint8_t stream_data[];
+#define FLOOR_SIZE      40
 
-int main(int argc, const char* argv[]) {
-	init_context(&ctx);
+int main() {
+
+	int i, p, xy_temp;
+	int px, py;
+
+	SVECTOR	rot;			    VECTOR	pos;
+	SVECTOR verts[FLOOR_SIZE + 1][FLOOR_SIZE + 1];
+	VECTOR	cam_pos;		    VECTOR	cam_rot;		    int		cam_mode;
+	VECTOR	tpos;			    SVECTOR	trot;			    MATRIX	mtx, lmtx;
+	//PADTYPE* pad;
+	POLY_F4* pol4;
+
+	init();
+
 	SpuInit();
 	reset_spu_channels();
 
@@ -73,22 +51,108 @@ int main(int argc, const char* argv[]) {
 
 	uint16_t last_buttons = 0xffff;
 
+	pos.vx = 0;
+	pos.vz = 0;
+	pos.vy = -125;
+
+	rot.vx = 0;
+	rot.vy = 0;
+	rot.vz = 0;
+
+	for (py = 0; py < FLOOR_SIZE + 1; py++) {
+		for (px = 0; px < FLOOR_SIZE + 1; px++) {
+
+			setVector(&verts[py][px],
+				(100 * (px - 8)) - 50,
+				0,
+				(100 * (py - 8)) - 50);
+
+		}
+	}
+
+
+	setVector(&cam_pos, 0, ONE * -250, 0);
+	setVector(&cam_rot, 0, 0, 0);
+
 	while (1) {
-		FntPrint(-1, "PLAYING SPU STREAM\n\n");
+
+		cam_mode = 0;
+
+		trot.vx = cam_rot.vx >> 12;
+		trot.vy = cam_rot.vy >> 12;
+		trot.vz = cam_rot.vz >> 12;
+
+		SVECTOR up = { 0, -ONE, 0 };
+
+		tpos.vx = cam_pos.vx >> 12;
+		tpos.vy = cam_pos.vy >> 12;
+		tpos.vz = cam_pos.vz >> 12;
+
+		LookAt(&tpos, &pos, &up, &mtx);
+
+		gte_SetRotMatrix(&mtx);
+		gte_SetTransMatrix(&mtx);
+
+		pol4 = (POLY_F4*)db_nextpri;
+
+		for (py = 0; py < FLOOR_SIZE; py++) {
+			for (px = 0; px < FLOOR_SIZE; px++) {
+
+				gte_ldv3(
+					&verts[py][px],
+					&verts[py][px + 1],
+					&verts[py + 1][px]);
+
+				gte_rtpt();
+
+				gte_avsz3();
+				gte_stotz(&p);
+
+				if (((p >> 2) >= OT_LEN) || ((p >> 2) <= 0))
+					continue;
+
+				setPolyF4(pol4);
+
+				gte_stsxy0(&pol4->x0);
+				gte_stsxy1(&pol4->x1);
+				gte_stsxy2(&pol4->x2);
+
+				gte_ldv0(&verts[py + 1][px + 1]);
+				gte_rtps();
+				gte_stsxy(&pol4->x3);
+
+				if (quad_clip(&screen_clip,
+					(DVECTOR*)&pol4->x0, (DVECTOR*)&pol4->x1,
+					(DVECTOR*)&pol4->x2, (DVECTOR*)&pol4->x3))
+					continue;
+
+				gte_avsz4();
+				gte_stotz(&p);
+
+				if ((px + py) & 0x1) {
+					setRGB0(pol4, 128, 128, 128);
+				}
+				else {
+					setRGB0(pol4, 255, 255, 255);
+				}
+
+				addPrim(db[db_active].ot + (p >> 2), pol4);
+				pol4++;
+
+			}
+		}
+
+		db_nextpri = (char*)pol4;
+
+		sort_cube(&mtx, &pos, &rot, 0, 200, 0);
+
+		cam_pos.vx = (pos.vx + (isin(rot.vy) - 1) / 10) << 12;
+		cam_pos.vz = (pos.vz + (icos(rot.vy) - 1) / 10) << 12;
 		FntPrint(-1, "BUFFER: %d\n", stream_ctx.db_active);
-		FntPrint(-1, "STATUS: %s\n\n", stream_ctx.buffering ? "BUFFERING" : "IDLE");
-
 		FntPrint(-1, "POSITION: %d/%d\n",  stream_ctx.next_chunk, stream_ctx.num_chunks);
-		FntPrint(-1, "SMP RATE: %5d HZ\n\n", (sample_rate * 44100) >> 12);
-
+		FntPrint(-1, "SMP RATE: %5d HZ\n", (sample_rate * 44100) >> 12);
 		FntPrint(-1, "[START]      %s\n", paused ? "RESUME" : "PAUSE");
-		FntPrint(-1, "[LEFT/RIGHT] SEEK\n");
-		FntPrint(-1, "[O]          RESET POSITION\n");
-		FntPrint(-1, "[UP/DOWN]    CHANGE SAMPLE RATE\n");
-		FntPrint(-1, "[X]          RESET SAMPLE RATE\n");
-
 		FntFlush(-1);
-		display(&ctx);
 
 		// Check if a compatible controller is connected and handle button
 		// presses.
@@ -109,7 +173,7 @@ int main(int argc, const char* argv[]) {
 			else
 				start_stream();
 		}
-
+		/*
 		if (!(pad->btn & PAD_LEFT))
 			stream_ctx.next_chunk--;
 		if (!(pad->btn & PAD_RIGHT))
@@ -129,9 +193,14 @@ int main(int argc, const char* argv[]) {
 			for (int i = 0; i < stream_ctx.channels; i++)
 				SPU_CH_FREQ(i) = sample_rate;
 		}
-
+		*/
 		last_buttons = pad->btn;
+
+		display();
+
 	}
 
 	return 0;
+
 }
+

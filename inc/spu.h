@@ -20,6 +20,7 @@ typedef struct {
 } StreamContext;
 
 extern StreamContext stream_ctx;
+extern const uint8_t stream_data[];
 
 void stop_stream(void);
 void start_stream(void);

@@ -1,6 +1,10 @@
 {
     "files.associations": {
         "stddef.h": "c",
-        "hwregs_c.h": "c"
+        "hwregs_c.h": "c",
+        "psxetc.h": "c",
+        "psxpad.h": "c",
+        "gpu.h": "c",
+        "cube.h": "c"
     }
 }
